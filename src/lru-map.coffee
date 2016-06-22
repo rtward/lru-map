@@ -3,56 +3,55 @@ Symbol = require 'es6-symbol'
 Promise = require 'bluebird'
 
 module.exports = class LRUMap
-	_maxSize = _maxAge = _calcSize = _user_onEvict = _user_onStale = _onRemove = _warmer = _warmed = undefined
-	_accessUpdatesTimestamp = _onEvict = _onStale = _map = _total = _atomicInflights = undefined
-
 	constructor: (opts = {}) ->
-		_maxSize = opts.maxSize ? (Infinity)
-		_maxAge = opts.maxAge ? (Infinity)
-		_calcSize = opts.calcSize ? ((value) -> 1)
-		_user_onEvict = opts.onEvict ? ((key, value) -> undefined)
-		_user_onStale = opts.onStale ? ((key, value) -> undefined)
-		_onRemove = opts.onRemove ? ((key, value) -> undefined)
-		_accessUpdatesTimestamp = opts.accessUpdatesTimestamp ? false
-		_warmer = opts.warmer ? (cache) -> Promise.resolve()
+		this._maxSize = opts.maxSize ? (Infinity)
+		this._maxAge = opts.maxAge ? (Infinity)
+		this.calcSize = opts.calcSize ? ((value) -> 1)
+		this.user_onEvict = opts.onEvict ? ((key, value) -> undefined)
+		this.user_onStale = opts.onStale ? ((key, value) -> undefined)
+		this._onRemove = opts.onRemove ? ((key, value) -> undefined)
+		this._accessUpdatesTimestamp = opts.accessUpdatesTimestamp ? false
+		this.warmer = opts.warmer ? (cache, args...) -> Promise.resolve()
 
-		unless typeof _maxSize is 'number' and _maxSize >= 0
+		this.warmed = undefined
+
+		unless typeof this._maxSize is 'number' and this._maxSize >= 0
 			throw new Error 'maxSize must be a non-negative number'
 
-		unless typeof _calcSize is 'function'
+		unless typeof this.calcSize is 'function'
 			throw new TypeError 'calcSize must be a function'
 
-		unless typeof _user_onEvict is 'function'
+		unless typeof this.user_onEvict is 'function'
 			throw new TypeError 'onEvict must be a function'
 
-		unless typeof _user_onStale is 'function'
+		unless typeof this.user_onStale is 'function'
 			throw new TypeError 'onStale must be a function'
 
-		unless typeof _onRemove is 'function'
+		unless typeof this._onRemove is 'function'
 			throw new TypeError 'onRemove must be a function'
 
-		unless typeof _warmer is 'function'
+		unless typeof this.warmer is 'function'
 			throw new TypeError 'warmer must be a function'
 
-		_onEvict = (key, value) ->
-			_onRemove(key, value)
-			_user_onEvict(key, value)
+		this._onEvict = (key, value) ->
+			this._onRemove(key, value)
+			this.user_onEvict(key, value)
 
-		_onStale = (key, value) ->
-			_onRemove(key, value)
-			_user_onStale(key, value)
+		this._onStale = (key, value) ->
+			this._onRemove(key, value)
+			this.user_onStale(key, value)
 
-		_atomicInflights = new Map
-		_map = new Map
-		_total = 0
+		this.atomicInflights = new Map
+		this.map = new Map
+		this.total = 0
 
 		this[Symbol.iterator] = -> @entries()
 
 		if LRUMap.__testing__ is true
-			@testMap = _map
-			@testInflights = _atomicInflights
-			@testSetTotal = (x) -> _total = x
-			@testSetMaxAge = (x) -> _maxAge = x
+			@testMap = this.map
+			@testInflights = this.atomicInflights
+			@testSetTotal = (x) -> this.total = x
+			@testSetMaxAge = (x) -> this._maxAge = x
 
 	# immediate effect; reaps stales
 	maxAge: (age) ->
@@ -60,11 +59,11 @@ module.exports = class LRUMap
 			unless typeof age is 'number' and age > 0
 				throw new Error 'age must be a positive number of seconds'
 
-			_maxAge = age
+			this._maxAge = age
 
 			@reapStale()
 
-		return _maxAge
+		return this._maxAge
 
 	# no immediate effect
 	accessUpdatesTimestamp: (doesIt) ->
@@ -72,9 +71,9 @@ module.exports = class LRUMap
 			unless typeof doesIt is 'boolean'
 				throw new TypeError 'accessUpdatesTimestamp accepts a boolean'
 
-			_accessUpdatesTimestamp = doesIt
+			this._accessUpdatesTimestamp = doesIt
 
-		return _accessUpdatesTimestamp
+		return this._accessUpdatesTimestamp
 
 	# immediate effect; reaps stales
 	maxSize: (size) ->
@@ -82,78 +81,78 @@ module.exports = class LRUMap
 			unless typeof size is 'number' and size > 0
 				throw new Error 'size must be a positive number'
 
-			_maxSize = size
+			this._maxSize = size
 
 			@reapStale()
 
-			entries = _map.entries()
-			while _total > _maxSize
+			entries = this.map.entries()
+			while this.total > this._maxSize
 				oldest = entries.next().value
 
 				break unless oldest?
 
-				_map.delete oldest[0]
-				_total -= oldest[1].size
+				this.map.delete oldest[0]
+				this.total -= oldest[1].size
 
-				_onEvict oldest[0], oldest[1].value
+				this._onEvict oldest[0], oldest[1].value
 
-		return _maxSize
+		return this._maxSize
 
 	# returns a promise that will be fulfilled when the cache is done warming
-	warm: ->
-		unless _warmed? then _warmed = Promise.resolve(_warmer(this))
-		return _warmed
+	warm: (args...) ->
+		unless this.warmed? then this.warmed = Promise.resolve(this.warmer(this, args...))
+		return this.warmed
 
 	# non-mutating; idempotent
 	currentSize: ->
-		return _total
+		return this.total
 
 	# non-mutating; idempotent
 	fits: (value) ->
-		return _calcSize(value) <= _maxSize
+		return this.calcSize(value) <= this._maxSize
 
 	# non-mutating; idempotent
 	wouldCauseEviction: (value) ->
-		return (_calcSize(value) + _total > _maxSize) and (_total > 0)
+		return (this.calcSize(value) + this.total > this._maxSize) and (this.total > 0)
 
 	# non-mutating configuration method; no immediate effect
 	onEvict: (fn) ->
 		unless typeof fn is 'function'
 			throw new TypeError 'argument to onEvict must be a function'
 
-		_onEvict = fn
+		this._onEvict = fn
 
 	# non-mutating configuration method; no immediate effect
 	onStale: (fn) ->
 		unless typeof fn is 'function'
 			throw new TypeError 'argument to onStale must be a function'
 
-		_onStale = fn
+		this._onStale = fn
 
 	# non-mutating configuration method; no immediate effect
 	onRemove: (fn) ->
 		unless typeof fn is 'function'
 			throw new TypeError 'argument to onRemove must be a function'
 
-		_onRemove = fn
+		this._onRemove = fn
 
 	# reaps stales
 	reapStale: ->
-		return if _maxAge is Infinity
+		return if this._maxAge is Infinity
 
-		entries = _map.entries()
+		entries = this.map.entries()
 		cur = entries.next().value
 
 		while cur?
 			diff = (+(new Date) - cur[1].timestamp) / 1000
 
-			if diff > _maxAge
-				_map.delete cur[0]
-				_total -= cur[1].size
+			if diff > this._maxAge
+				this.map.delete cur[0]
+				this.total -= cur[1].size
 
-				_onStale cur[0], cur[1].value
+				this._onStale cur[0], cur[1].value
 			else
-				if _accessUpdatesTimestamp
+				if this._accessUpdatesTimestamp
 					break
 
 			cur = entries.next().value
@@ -162,33 +161,33 @@ module.exports = class LRUMap
 	set: (key, value) ->
 		@reapStale()
 
-		size = _calcSize value
+		size = this.calcSize value
 		timestamp = +(new Date)
-		priorTotal = _total
+		priorTotal = this.total
 
 		if isNaN(size) or size < 0 or typeof size isnt 'number'
 			throw new Error 'calcSize() must return a positive number'
 
-		if _map.has key
+		if this.map.has key
 			priorTotal -= @sizeOf key
 
-		if size > _maxSize
-			throw new Error "cannot store an object of that size (maxSize = #{_maxSize}; value size = #{size})"
+		if size > this._maxSize
+			throw new Error "cannot store an object of that size (maxSize = #{this._maxSize}; value size = #{size})"
 
-		entries = _map.entries()
+		entries = this.map.entries()
 
-		while priorTotal + size > _maxSize
+		while priorTotal + size > this._maxSize
 			oldest = entries.next().value
 
 			break unless oldest?
 
-			_map.delete oldest[0]
+			this.map.delete oldest[0]
 			priorTotal -= oldest[1].size
 
-			_onEvict oldest[0], oldest[1].value
+			this._onEvict oldest[0], oldest[1].value
 
-		_map.set key, {size, value, timestamp}
-		_total = priorTotal + size
+		this.map.set key, {size, value, timestamp}
+		this.total = priorTotal + size
 
 		return this
 
@@ -214,13 +213,13 @@ module.exports = class LRUMap
 		unless typeof opts.onCacheMiss is 'function'
 			throw new TypeError 'opts.onCacheMiss must be a function'
 
-		if _atomicInflights.has key
+		if this.atomicInflights.has key
 			setTimeout -> opts.onCacheHit key
-			return _atomicInflights.get key
+			return this.atomicInflights.get key
 
 		@reapStale()
 
-		if _map.has key
+		if this.map.has key
 			setTimeout -> opts.onCacheHit key
 			return Promise.resolve @get key
 
@@ -232,21 +231,21 @@ module.exports = class LRUMap
 		inflight = Promise.resolve(newValue)
 			.timeout(opts.timeout)
 			.tap (value) =>
-				_atomicInflights.delete key
+				this.atomicInflights.delete key
 				@reapStale()
 				@set key, value
-			.catch (e) ->
-				_atomicInflights.delete key
+			.catch (e) =>
+				this.atomicInflights.delete key
 				Promise.reject e
 
-		_atomicInflights.set key, inflight
+		this.atomicInflights.set key, inflight
 		return inflight
 
 	# mutates Map state; affects LRU eviction; affects staleness; reaps stales
 	delete: (key) ->
-		if _map.has key
-			_total -= @sizeOf key
-			_map.delete key
+		if this.map.has key
+			this.total -= @sizeOf key
+			this.map.delete key
 			@reapStale()
 			return true
 		else
@@ -255,71 +254,71 @@ module.exports = class LRUMap
 
 	# mutates Map state
 	clear: ->
-		_map.clear()
-		_total = 0
+		this.map.clear()
+		this.total = 0
 		return
 
 	# affects LRU eviction; affects staleness if accessUpdatesTimestamp
 	get: (key) ->
-		entry = _map.get key
+		entry = this.map.get key
 
 		return undefined unless entry?
 
-		_map.delete key
+		this.map.delete key
 
-		if _accessUpdatesTimestamp
+		if this._accessUpdatesTimestamp
 			entry.timestamp = +(new Date)
 
-		_map.set key, entry
+		this.map.set key, entry
 
 		return entry.value
 
 	# non-evicting; reaps stales
 	has: (key) ->
 		@reapStale()
-		return _map.has key
+		return this.map.has key
 
 	# non-evicting; reaps stales
 	peek: (key) ->
 		@reapStale()
-		entry = _map.get key
+		entry = this.map.get key
 		return entry?.value
 
 	# non-mutating; idempotent
 	sizeOf: (key) ->
-		entry = _map.get key
+		entry = this.map.get key
 		return entry?.size
 
 	# non-mutating; idempotent
 	ageOf: (key) ->
-		entry = _map.get key
+		entry = this.map.get key
 
 		if entry?
 			return Math.round((+(new Date) - entry.timestamp) / 1000)
 
 	# non-mutating; idempotent
 	isStale: (key) ->
-		entry = _map.get key
+		entry = this.map.get key
 
 		if entry?
-			return @ageOf(key) > _maxAge
+			return @ageOf(key) > this._maxAge
 
 	# non-evicting; reaps stales
 	keys: ->
 		@reapStale()
-		return _map.keys()
+		return this.map.keys()
 
 	# non-evicting; reaps stales
 	values: ->
 		@reapStale()
-		iter = _map.values()
+		iter = this.map.values()
 
 		return {
-			next: ->
+			next: =>
 				ev = iter.next().value
 
 				if ev?
-					if _accessUpdatesTimestamp
+					if this._accessUpdatesTimestamp
 						ev.timestamp = +(new Date)
 
 					return {value: ev.value, done: false}
@@ -330,14 +329,14 @@ module.exports = class LRUMap
 	# non-evicting; reaps stales
 	entries: ->
 		@reapStale()
-		iter = _map.entries()
+		iter = this.map.entries()
 
 		return {
-			next: ->
+			next: =>
 				entry = iter.next().value
 
 				if entry?
-					if _accessUpdatesTimestamp
+					if this._accessUpdatesTimestamp
 						entry[1].timestamp = +(new Date)
 
 					return {done: false, value: [entry[0], entry[1].value]}
@@ -348,8 +347,8 @@ module.exports = class LRUMap
 	# non-evicting; reaps stales
 	forEach: (callback, thisArg) ->
 		@reapStale()
-		_map.forEach (value, key, map) =>
-			if _accessUpdatesTimestamp
+		this.map.forEach (value, key, map) =>
+			if this._accessUpdatesTimestamp
 				value.timestamp = +(new Date)
 
 			callback.call thisArg, value.value, key, this

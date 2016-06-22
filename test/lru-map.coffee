@@ -154,6 +154,22 @@ describe 'LRUMap', ->
 				done()
 			.catch done
 
+		it 'should pass through args', (done) ->
+			warmerRun = false
+			warmer    = (cache, args...) ->
+				expect(args).to.eql [1,2,3]
+				warmerRun = true
+
+			lmap = new LRUMap({warmer})
+
+			expect(warmerRun).to.be false
+
+			lmap.warm(1, 2, 3)
+			.then ->
+				expect(warmerRun).to.be true
+				done()
+			.catch done
+
 	describe '#currentSize()', ->
 		it 'reports the current size', ->
 			lmap = new LRUMap
